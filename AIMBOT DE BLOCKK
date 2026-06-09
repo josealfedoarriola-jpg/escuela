@@ -17,6 +17,7 @@ local espEnabled: boolean = true
 local fovSize: number = 90
 local excludedPlayers: { [Player]: boolean } = {}
 local espElements: { [Player]: { highlight: Highlight, billboard: BillboardGui, nameLabel: TextLabel, statsLabel: TextLabel, itemLabel: TextLabel } } = {}
+local pickItemsEnabled: boolean = false
 local guiMinimized: boolean = false
 
 -- === GUI ===
@@ -42,7 +43,7 @@ screenGui.Parent = playerGui
 -- Main Frame (centered 0.5, 0.5)
 local mainFrame = Instance.new("Frame")
 mainFrame.Name = "MainFrame"
-mainFrame.Size = UDim2.new(0, 300, 0, 520)
+mainFrame.Size = UDim2.new(0, 300, 0, 568)
 mainFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
 mainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
 mainFrame.BackgroundColor3 = BG_PANEL
@@ -218,11 +219,33 @@ espBtnGradient.Color = ColorSequence.new({
 espBtnGradient.Rotation = 90
 espBtnGradient.Parent = espBtn
 
+-- Pick Items Toggle
+local pickItemsBtn = Instance.new("TextButton")
+pickItemsBtn.Name = "PickItemsToggle"
+pickItemsBtn.Size = UDim2.new(0.85, 0, 0, 42)
+pickItemsBtn.Position = UDim2.new(0.075, 0, 0, 140)
+pickItemsBtn.BackgroundColor3 = RED_OFF
+pickItemsBtn.Text = "Pick Items: OFF"
+pickItemsBtn.TextColor3 = TEXT_DIM
+pickItemsBtn.TextScaled = true
+pickItemsBtn.Font = Enum.Font.GothamBold
+pickItemsBtn.BorderSizePixel = 0
+pickItemsBtn.Parent = mainFrame
+
+local pickItemsBtnCorner = Instance.new("UICorner")
+pickItemsBtnCorner.CornerRadius = UDim.new(0, 8)
+pickItemsBtnCorner.Parent = pickItemsBtn
+
+local pickItemsBtnStroke = Instance.new("UIStroke")
+pickItemsBtnStroke.Color = Color3.fromRGB(55, 55, 75)
+pickItemsBtnStroke.Thickness = 1.2
+pickItemsBtnStroke.Parent = pickItemsBtn
+
 -- FOV Label
 local fovLabel = Instance.new("TextLabel")
 fovLabel.Name = "FOVLabel"
 fovLabel.Size = UDim2.new(0.85, 0, 0, 26)
-fovLabel.Position = UDim2.new(0.075, 0, 0, 142)
+fovLabel.Position = UDim2.new(0.075, 0, 0, 190)
 fovLabel.BackgroundTransparency = 1
 fovLabel.Text = "FOV: 90"
 fovLabel.TextColor3 = TEXT_LABEL
@@ -235,7 +258,7 @@ fovLabel.Parent = mainFrame
 local sliderTrack = Instance.new("Frame")
 sliderTrack.Name = "SliderTrack"
 sliderTrack.Size = UDim2.new(0.85, 0, 0, 8)
-sliderTrack.Position = UDim2.new(0.075, 0, 0, 172)
+sliderTrack.Position = UDim2.new(0.075, 0, 0, 220)
 sliderTrack.BackgroundColor3 = BG_SLIDER
 sliderTrack.BorderSizePixel = 0
 sliderTrack.Parent = mainFrame
@@ -286,7 +309,7 @@ thumbStroke.Parent = sliderThumb
 local playerListLabel = Instance.new("TextLabel")
 playerListLabel.Name = "PlayerListLabel"
 playerListLabel.Size = UDim2.new(0.85, 0, 0, 26)
-playerListLabel.Position = UDim2.new(0.075, 0, 0, 192)
+playerListLabel.Position = UDim2.new(0.075, 0, 0, 240)
 playerListLabel.BackgroundTransparency = 1
 playerListLabel.Text = "Players (click to exclude)"
 playerListLabel.TextColor3 = TEXT_LABEL
@@ -299,7 +322,7 @@ playerListLabel.Parent = mainFrame
 local refreshButton = Instance.new("TextButton")
 refreshButton.Name = "RefreshButton"
 refreshButton.Size = UDim2.new(0, 26, 0, 26)
-refreshButton.Position = UDim2.new(0.85, -10, 0, 192)
+refreshButton.Position = UDim2.new(0.85, -10, 0, 240)
 refreshButton.BackgroundColor3 = ACCENT
 refreshButton.Text = "R"
 refreshButton.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -321,7 +344,7 @@ refreshStroke.Parent = refreshButton
 local playerScroll = Instance.new("ScrollingFrame")
 playerScroll.Name = "PlayerScroll"
 playerScroll.Size = UDim2.new(0.9, 0, 0, 265)
-playerScroll.Position = UDim2.new(0.05, 0, 0, 224)
+playerScroll.Position = UDim2.new(0.05, 0, 0, 272)
 playerScroll.BackgroundColor3 = BG_CARD
 playerScroll.BackgroundTransparency = 0.15
 playerScroll.BorderSizePixel = 0
@@ -834,6 +857,127 @@ local function toggleESP(): ()
 	end
 end
 
+-- === Pick Items ===
+
+local PICK_RADIUS: number = 80
+local PICK_INTERVAL: number = 1
+
+local droppedTools: { [Tool]: true } = {}
+local itemsDirty: boolean = false
+
+local function isDroppedTool(obj: Instance): boolean
+	if not obj:IsA("Tool") then
+		return false
+	end
+	local tool: Tool = obj :: Tool
+	if not tool.Parent then
+		return false
+	end
+	if tool.Parent == player.Character or tool.Parent == player:FindFirstChildOfClass("Backpack") then
+		return false
+	end
+	if tool.Parent:IsA("Model") and playersService:GetPlayerFromCharacter(tool.Parent) then
+		return false
+	end
+	return true
+end
+
+local function onDescendantAdded(obj: Instance): ()
+	if not pickItemsEnabled then
+		return
+	end
+	if isDroppedTool(obj) then
+		droppedTools[obj :: Tool] = true
+		itemsDirty = true
+	end
+end
+
+local function onDescendantRemoving(obj: Instance): ()
+	if obj:IsA("Tool") then
+		droppedTools[obj :: Tool] = nil
+	end
+end
+
+local function togglePickItems(): ()
+	pickItemsEnabled = not pickItemsEnabled
+	if pickItemsEnabled then
+		pickItemsBtn.BackgroundColor3 = GREEN_ON
+		pickItemsBtn.TextColor3 = TEXT_WHITE
+		pickItemsBtnStroke.Color = GREEN_ON_DARK
+		pickItemsBtn.Text = "Pick Items: ON"
+		local grad = pickItemsBtn:FindFirstChildOfClass("UIGradient")
+		if not grad then
+			grad = Instance.new("UIGradient")
+			grad.Color = ColorSequence.new({
+				ColorSequenceKeypoint.new(0, Color3.fromRGB(90, 230, 130)),
+				ColorSequenceKeypoint.new(1, Color3.fromRGB(50, 180, 90)),
+			})
+			grad.Rotation = 90
+			grad.Parent = pickItemsBtn
+		end
+		droppedTools = {}
+		itemsDirty = false
+		print("[PickItems] Enabled - auto-picking dropped items")
+	else
+		pickItemsBtn.BackgroundColor3 = RED_OFF
+		pickItemsBtn.TextColor3 = TEXT_DIM
+		pickItemsBtnStroke.Color = Color3.fromRGB(55, 55, 75)
+		pickItemsBtn.Text = "Pick Items: OFF"
+		local grad = pickItemsBtn:FindFirstChildOfClass("UIGradient")
+		if grad then
+			grad:Destroy()
+		end
+		droppedTools = {}
+		print("[PickItems] Disabled")
+	end
+end
+
+local function tryEquipClosest(): ()
+	local character: Model? = player.Character
+	if not character then
+		return
+	end
+	local rootPart: BasePart? = character:FindFirstChild("HumanoidRootPart")
+	if not rootPart then
+		return
+	end
+	local humanoid: Humanoid? = character:FindFirstChildOfClass("Humanoid")
+	if not humanoid then
+		return
+	end
+	local playerPos: Vector3 = rootPart.Position
+	local closestTool: Tool? = nil
+	local closestDist: number = math.huge
+	for tool: Tool in pairs(droppedTools) do
+		if not tool.Parent or not isDroppedTool(tool) then
+			droppedTools[tool] = nil
+			continue
+		end
+		local handle: BasePart? = tool:FindFirstChild("Handle")
+		if not handle then
+			continue
+		end
+		local dist: number = (handle.Position - playerPos).Magnitude
+		if dist < closestDist and dist <= PICK_RADIUS then
+			closestDist = dist
+			closestTool = tool
+		end
+	end
+	if closestTool then
+		humanoid:EquipTool(closestTool)
+	end
+end
+
+local function pickItemsLoop(): ()
+	while pickItemsEnabled do
+		if itemsDirty then
+			itemsDirty = false
+			tryEquipClosest()
+		end
+		task.wait(PICK_INTERVAL)
+	end
+end
+
 -- === Minimize / Restore ===
 
 local function minimizeGUI(): ()
@@ -869,6 +1013,24 @@ restoreBtn.MouseButton1Click:Connect(restoreGUI)
 
 -- ESP toggle
 espBtn.MouseButton1Click:Connect(toggleESP)
+
+-- Pick Items toggle
+pickItemsBtn.MouseButton1Click:Connect(function()
+	togglePickItems()
+	if pickItemsEnabled then
+		-- Initial scan on enable
+		for _, obj: Instance in ipairs(workspace:GetDescendants()) do
+			if isDroppedTool(obj) then
+				droppedTools[obj :: Tool] = true
+			end
+		end
+		itemsDirty = true
+		task.spawn(pickItemsLoop)
+	end
+end)
+
+workspace.DescendantAdded:Connect(onDescendantAdded)
+workspace.DescendantRemoving:Connect(onDescendantRemoving)
 
 -- Refresh player list
 refreshButton.MouseButton1Click:Connect(refreshPlayerList)
