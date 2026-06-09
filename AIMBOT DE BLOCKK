@@ -6,6 +6,7 @@ local userInputService: UserInputService = game:GetService("UserInputService")
 local runService: RunService = game:GetService("RunService")
 local camera: Camera = workspace.CurrentCamera
 local playersService: Players = game:GetService("Players")
+local replicatedStorage: ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local AIMBOT_KEY: EnumItem = Enum.KeyCode.F
 local MIN_FOV: number = 10
@@ -559,8 +560,267 @@ local RARITY_COLORS: { [string]: Color3 } = {
 
 local RARITY_ORDER: { string } = { "Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic" }
 
-local function cleanToolName(name: string): string
-	local cleaned: string = name
+-- Helper: validates whether a string looks like a real item/weapon name
+local function isValidName(text: string): boolean
+	if text == "" or tonumber(text) then
+		return false
+	end
+
+	local lower: string = text:lower()
+
+	-- Reject common "no item" messages
+	if lower:find("nuthin") or lower:find("nothing") or lower:find("empty") or lower:find("none") then
+		return false
+	end
+	if lower:find("i have") or lower:find("you have") or lower:find("don'") then
+		return false
+	end
+
+	-- Reject Roblox asset IDs (rbxassetid://... or rbxasset://...)
+	if lower:find("rbxassetid://") or lower:find("rbxasset://") then
+		return false
+	end
+
+	-- Reject text that looks like a UI message (more than 3 words)
+	local _, wordCount = text:gsub("%S+", "")
+	if wordCount > 3 then
+		return false
+	end
+
+	-- Reject strings with excessive character repetition (e.g. "nnnnnnnnnggg")
+	local longestRepeat: number = 0
+	local currentChar: string = ""
+	local currentCount: number = 0
+	for char in text:gmatch(".") do
+		local c: string = char:lower()
+		if c == currentChar then
+			currentCount += 1
+		else
+			currentChar = c
+			currentCount = 1
+		end
+		if currentCount > longestRepeat then
+			longestRepeat = currentCount
+		end
+	end
+	if longestRepeat > 5 then
+		return false
+	end
+
+	return true
+end
+
+-- Cache for weapon name lookups from ReplicatedStorage modules (avoids repeated deep scans)
+local weaponNameCache: { [string]: string } = {}
+local weaponCacheBuilt: boolean = false
+
+local function buildWeaponNameCache(): ()
+	if weaponCacheBuilt then
+		return
+	end
+	weaponCacheBuilt = true
+
+	-- Scan ReplicatedStorage for ModuleScripts that might contain weapon name data
+	local foldersToSearch: { Instance } = { replicatedStorage }
+
+	-- Common folder names where games store weapon data
+	for _, folderName: string in ipairs({ "Weapons", "Items", "Tools", "Guns", "Swords", "WeaponData", "ItemData", "ToolData", "Configs", "Config", "Data", "Shared", "Modules" }) do
+		local folder: Instance? = replicatedStorage:FindFirstChild(folderName)
+		if folder then
+			table.insert(foldersToSearch, folder)
+		end
+	end
+
+	for _, parent: Instance in ipairs(foldersToSearch) do
+		for _, desc: Instance in ipairs(parent:GetDescendants()) do
+			-- ModuleScripts named like weapon configs (e.g., "1", "Sword", etc.)
+			-- Also check for RemoteEvents/RemoteFunctions that might be named like "Equip_WeaponName"
+			if desc:IsA("ModuleScript") or desc:IsA("RemoteEvent") or desc:IsA("RemoteFunction") then
+				local dName: string = desc.Name
+				-- Normalize the key: strip common prefix patterns
+				local key: string = dName:lower()
+				key = key:gsub("^(equip%s*[_%s]*)", "")
+				key = key:gsub("^(unlock%s*[_%s]*)", "")
+				key = key:gsub("^(buy%s*[_%s]*)", "")
+				key = key:gsub("^(get%s*[_%s]*)", "")
+
+				-- Only store non-numeric meaningful names
+				if not tonumber(key) and key ~= "" then
+					weaponNameCache[key] = dName
+					-- Also store by the original name
+					weaponNameCache[dName] = dName
+				end
+			end
+
+			-- StringValue children that might map IDs to names
+			if desc:IsA("StringValue") then
+				local val: string = desc.Value
+				if isValidName(val) then
+					-- Map by parent name and by own name
+					if desc.Parent then
+						weaponNameCache[desc.Parent.Name:lower()] = val
+						weaponNameCache[desc.Parent.Name] = val
+					end
+					weaponNameCache[desc.Name:lower()] = val
+					weaponNameCache[desc.Name] = val
+				end
+			end
+		end
+	end
+end
+
+-- Cache for items found in Workspace dropped tools
+local itemNameCache: { [string]: string } = {}
+local itemNameCacheBuilt: boolean = false
+
+local function scanWorkspaceForItemNames(): ()
+	if itemNameCacheBuilt then
+		return
+	end
+	itemNameCacheBuilt = true
+	for _, obj: Instance in ipairs(workspace:GetDescendants()) do
+		if obj:IsA("Tool") then
+			local toolName: string = obj.Name
+			if tonumber(toolName) then
+				-- Try ToolTip first
+				local tooltip: string = obj.ToolTip
+				if isValidName(tooltip) then
+					itemNameCache[toolName] = tooltip
+					continue
+				end
+				-- Try all StringValue descendants
+				for _, desc: Instance in ipairs(obj:GetDescendants()) do
+					if desc:IsA("StringValue") then
+						local val: string = desc.Value
+						if isValidName(val) then
+							itemNameCache[toolName] = val
+							break
+						end
+					end
+				end
+			end
+		end
+	end
+end
+
+local function getDisplayName(tool: Tool): string
+	local toolName: string = tool.Name
+
+	-- 1) Tool.ToolTip — Roblox officially uses this for hover names, games often set it
+	local tooltip: string = tool.ToolTip
+	if tooltip ~= "" and not tonumber(tooltip) and isValidName(tooltip) then
+		return tooltip
+	end
+
+	-- 2) Check known-name attributes on the Tool
+	local attrKeys: { string } = { "DisplayName", "ItemName", "WeaponName", "ToolName", "Name", "Title", "Label", "Item", "Weapon", "GearName" }
+	for _, attrName: string in ipairs(attrKeys) do
+		local val: any = tool:GetAttribute(attrName)
+		if val and type(val) == "string" and isValidName(val :: string) and val ~= toolName then
+			return val :: string
+		end
+	end
+
+	-- 3) Broad attribute scan: any string attribute with a valid name
+	local attributes: { string } = {}
+	for attrName: string, _ in tool:GetAttributes() do
+		table.insert(attributes, attrName)
+	end
+	for _, attrName: string in ipairs(attributes) do
+		local val: any = tool:GetAttribute(attrName)
+		if type(val) == "string" then
+			local strVal: string = val :: string
+			if isValidName(strVal) and strVal ~= toolName then
+				return strVal
+			end
+		end
+	end
+
+	-- 4) Check StringValue descendants
+	local bestCandidate: string? = nil
+	for _, desc: Instance in ipairs(tool:GetDescendants()) do
+		if desc:IsA("StringValue") then
+			local val: string = desc.Value
+			if isValidName(val) and val ~= toolName then
+				local nameLower: string = desc.Name:lower()
+				-- Prioritize name-related StringValues
+				if nameLower:find("name") or nameLower:find("title") or nameLower:find("label")
+					or nameLower:find("display") or nameLower:find("item")
+				then
+					return val
+				end
+				-- Keep first candidate found from non-name-related StringValues
+				if not bestCandidate then
+					bestCandidate = val
+				end
+			end
+		end
+	end
+	if bestCandidate and isValidName(bestCandidate) then
+		return bestCandidate
+	end
+
+	-- 5) Check Configuration folder for any valid StringValue
+	local config: Instance? = tool:FindFirstChild("Configuration")
+	if config then
+		for _, child: Instance in ipairs(config:GetChildren()) do
+			if child:IsA("StringValue") then
+				local val: string = child.Value
+				if isValidName(val) and val ~= toolName then
+					return val
+				end
+			end
+		end
+	end
+
+	-- 6) Handle might have a meaningful name
+	local handle: BasePart? = tool:FindFirstChild("Handle")
+	if handle and handle.Name ~= "Handle" and handle.Name ~= toolName and not tonumber(handle.Name) then
+		return handle.Name
+	end
+
+	-- 7) Check Handle's children for decals/texture names
+	if handle then
+		for _, hChild: Instance in ipairs(handle:GetChildren()) do
+			if hChild:IsA("Decal") or hChild:IsA("Texture") then
+				-- Some games name the Decal with the weapon name
+				if hChild.Name ~= "Decal" and hChild.Name ~= "Texture" and not tonumber(hChild.Name) then
+					return hChild.Name
+				end
+			end
+		end
+	end
+
+	-- 8) For numeric names, check our workspace item cache and ReplicatedStorage cache
+	if tonumber(toolName) then
+		-- Try workspace cache
+		scanWorkspaceForItemNames()
+		if itemNameCache[toolName] then
+			return itemNameCache[toolName]
+		end
+
+		-- Try ReplicatedStorage module cache
+		buildWeaponNameCache()
+		if weaponNameCache[toolName] then
+			return weaponNameCache[toolName]
+		end
+		if weaponNameCache[toolName:lower()] then
+			return weaponNameCache[toolName:lower()]
+		end
+
+		-- Check if the Tool's ClassName or path gives us a hint
+		-- Look at parent folder name
+		if tool.Parent and tool.Parent.Name ~= "Backpack" and tool.Parent.Name ~= "Character"
+			and not tonumber(tool.Parent.Name) then
+			-- The parent folder might be named after the weapon category
+			-- e.g., parent = "Swords" folder -> still not great, skip
+		end
+
+		return "Weapon #" .. toolName
+	end
+
+	-- 9) If Tool.Name is not numeric, clean it up
+	local cleaned: string = toolName
 	local prefixes: { string } = { "tools_cinder_", "tool_", "cinder_", "weapon_", "item_", "tools_", "gear_", "weapons_" }
 	for _, prefix: string in ipairs(prefixes) do
 		if cleaned:lower():sub(1, #prefix) == prefix then
@@ -609,8 +869,12 @@ local function getRarity(tool: Tool): string
 		return RARITY_ORDER[tierIndex]
 	end
 
-	-- Fallback: guess from name keywords
-	local lower: string = tool.Name:lower()
+	-- Fallback: guess from display name keywords (use getDisplayName for numeric Tool.Names)
+	local nameToSearch: string = tool.Name
+	if tonumber(nameToSearch) then
+		nameToSearch = getDisplayName(tool)
+	end
+	local lower: string = nameToSearch:lower()
 	if lower:find("mythic") or lower:find("legendary") then
 		if lower:find("mythic") then return "Mythic" else return "Legendary" end
 	elseif lower:find("epic") or lower:find("rare") then
@@ -626,24 +890,49 @@ type ToolInfo = { name: string, rarity: string }
 
 local function getToolList(targetPlayer: Player): { ToolInfo }
 	local tools: { ToolInfo } = {}
+	local seenNames: { [string]: boolean } = {}
 
+	local function addTool(tool: Tool): ()
+		local displayName: string = getDisplayName(tool)
+		if seenNames[displayName] then
+			return
+		end
+		seenNames[displayName] = true
+		table.insert(tools, { name = displayName, rarity = getRarity(tool) })
+	end
+
+	-- 1) Equipped tool (in Character)
 	local character: Model? = targetPlayer.Character
 	if character then
 		for _, child: Instance in ipairs(character:GetChildren()) do
 			if child:IsA("Tool") then
-				table.insert(tools, { name = cleanToolName(child.Name), rarity = getRarity(child :: Tool) })
+				addTool(child :: Tool)
 			end
 		end
 	end
 
+	-- 2) Backpack
 	local backpack: Backpack? = targetPlayer:FindFirstChildOfClass("Backpack")
 	if backpack then
 		for _, child: Instance in ipairs(backpack:GetChildren()) do
 			if child:IsA("Tool") then
-				table.insert(tools, { name = cleanToolName(child.Name), rarity = getRarity(child :: Tool) })
+				addTool(child :: Tool)
 			end
 		end
 	end
+
+	-- 3) StarterGear (shows what the player spawned with)
+	local starterGear: Instance? = targetPlayer:FindFirstChild("StarterGear")
+	if starterGear then
+		for _, child: Instance in ipairs(starterGear:GetChildren()) do
+			if child:IsA("Tool") then
+				addTool(child :: Tool)
+			end
+		end
+	end
+
+	-- 4) PlayerGui (some games store tool indicators here)
+	-- Not adding items from PlayerGui since they aren't actual Tools
 
 	return tools
 end
@@ -789,23 +1078,23 @@ local function updateESP(): ()
 			esp.statsLabel.TextColor3 = Color3.fromRGB(255, 80, 80)
 		end
 
-		-- Items (up to 3 tools from equipped + backpack, colored by rarity)
+		-- Items (Weapon: Rarety only, colored by rarity)
 		local toolList: { ToolInfo } = getToolList(targetPlayer)
 		if #toolList == 0 then
-			esp.itemLabel.Text = "None"
+			esp.itemLabel.Text = '<font color="#888888">Weapon:</font> None'
 		else
-			local display: string = ""
+			local display: string = '<font color="#888888">Weapon:</font> '
 			for i = 1, math.min(#toolList, 3) do
 				if i > 1 then
-					display ..= ", "
+					display ..= " | "
 				end
 				local toolInfo: ToolInfo = toolList[i]
 				local color: Color3 = RARITY_COLORS[toolInfo.rarity] or RARITY_COLORS.Common
 				local hex: string = string.format("#%02X%02X%02X", math.floor(color.R * 255), math.floor(color.G * 255), math.floor(color.B * 255))
-				display ..= string.format('<font color="%s">%s</font>', hex, toolInfo.name)
+				display ..= string.format('<font color="%s">%s</font>', hex, toolInfo.rarity)
 			end
 			if #toolList > 3 then
-				display ..= string.format(' +%d', #toolList - 3)
+				display ..= string.format(' <font color="#888888">+%d</font>', #toolList - 3)
 			end
 			esp.itemLabel.Text = display
 		end
@@ -1167,3 +1456,26 @@ end
 -- Initial setup
 refreshPlayerList()
 updateFOVOverlay()
+
+-- When new tools appear in workspace, add them to the item name cache
+workspace.DescendantAdded:Connect(function(desc: Instance)
+	if desc:IsA("Tool") then
+		local toolName: string = desc.Name
+		if tonumber(toolName) and not itemNameCache[toolName] then
+			local tooltip: string = desc.ToolTip
+			if tooltip ~= "" and not tonumber(tooltip) then
+				itemNameCache[toolName] = tooltip
+				return
+			end
+			for _, child: Instance in ipairs(desc:GetDescendants()) do
+				if child:IsA("StringValue") then
+					local val: string = child.Value
+					if val ~= "" and not tonumber(val) then
+						itemNameCache[toolName] = val
+						return
+					end
+				end
+			end
+		end
+	end
+end)
