@@ -613,12 +613,13 @@ end
 -- Cache for weapon name lookups from ReplicatedStorage modules (avoids repeated deep scans)
 local weaponNameCache: { [string]: string } = {}
 local weaponCacheBuilt: boolean = false
+local weaponCacheLastBuilt: number = 0
+local WEAPON_CACHE_INTERVAL: number = 10
 
-local function buildWeaponNameCache(): ()
-	if weaponCacheBuilt then
+local function buildWeaponNameCache(forceRebuild: boolean?): ()
+	if not forceRebuild and weaponCacheBuilt then
 		return
 	end
-	weaponCacheBuilt = true
 
 	-- Scan ReplicatedStorage for ModuleScripts that might contain weapon name data
 	local foldersToSearch: { Instance } = { replicatedStorage }
@@ -667,14 +668,18 @@ local function buildWeaponNameCache(): ()
 			end
 		end
 	end
+	weaponCacheBuilt = true
+	weaponCacheLastBuilt = tick()
 end
 
 -- Cache for items found in Workspace dropped tools
 local itemNameCache: { [string]: string } = {}
 local itemNameCacheBuilt: boolean = false
+local itemNameCacheLastBuilt: number = 0
+local ITEM_CACHE_INTERVAL: number = 10
 
-local function scanWorkspaceForItemNames(): ()
-	if itemNameCacheBuilt then
+local function scanWorkspaceForItemNames(forceRebuild: boolean?): ()
+	if not forceRebuild and itemNameCacheBuilt then
 		return
 	end
 	itemNameCacheBuilt = true
@@ -701,6 +706,8 @@ local function scanWorkspaceForItemNames(): ()
 			end
 		end
 	end
+	itemNameCacheBuilt = true
+	itemNameCacheLastBuilt = tick()
 end
 
 local function getDisplayName(tool: Tool): string
@@ -835,53 +842,121 @@ local function getDisplayName(tool: Tool): string
 end
 
 local function getRarity(tool: Tool): string
-	-- Check Rarity attribute (common in many weapon systems)
-	local rarity: any = tool:GetAttribute("Rarity")
-	if rarity and type(rarity) == "string" then
-		local r: string = rarity:sub(1, 1):upper() .. rarity:sub(2):lower()
+	-- Helper: match a rarity string against the known tiers
+	local function matchRarity(text: string): string?
+		if not text or text == "" then
+			return nil
+		end
+		local r: string = text:sub(1, 1):upper() .. text:sub(2):lower()
 		for _, tier: string in ipairs(RARITY_ORDER) do
 			if r == tier then
 				return tier
 			end
 		end
+		-- Try partial match (e.g., "legend" matches "Legendary")
+		local lower: string = text:lower()
+		if lower:find("mythic") then return "Mythic" end
+		if lower:find("legend") then return "Legendary" end
+		if lower:find("epic") then return "Epic" end
+		if lower:find("rare") then return "Rare" end
+		if lower:find("uncommon") then return "Uncommon" end
+		if lower:find("common") then return "Common" end
+		return nil
 	end
 
-	-- Check Rarity StringValue child
+	local rarityNames: { string } = { "Rarity", "rarity", "Tier", "tier", "RarityType", "Quality", "Grade", "Rank" }
+
+	-- 1) Check attributes on the Tool itself
+	for _, attrName: string in ipairs(rarityNames) do
+		local attr: any = tool:GetAttribute(attrName)
+		if attr then
+			if type(attr) == "string" then
+				local m: string? = matchRarity(attr :: string)
+				if m then return m end
+			elseif type(attr) == "number" then
+				local tierIndex: number = math.clamp(math.floor(attr :: number + 0.5), 1, #RARITY_ORDER)
+				return RARITY_ORDER[tierIndex]
+			end
+		end
+	end
+
+	-- 2) Check direct children (StringValue, IntValue, etc.)
 	for _, child: Instance in ipairs(tool:GetChildren()) do
-		if child:IsA("StringValue") and (child.Name == "Rarity" or child.Name == "rarity" or child.Name == "Tier" or child.Name == "tier") then
-			local r: string = child.Value:sub(1, 1):upper() .. child.Value:sub(2):lower()
-			for _, tier: string in ipairs(RARITY_ORDER) do
-				if r == tier then
-					return tier
+		for _, rName: string in ipairs(rarityNames) do
+			if child.Name == rName then
+				if child:IsA("StringValue") then
+					local m: string? = matchRarity(child.Value)
+					if m then return m end
+				elseif child:IsA("IntValue") or child:IsA("NumberValue") then
+					local tierIndex: number = math.clamp(math.floor(child.Value + 0.5), 1, #RARITY_ORDER)
+					return RARITY_ORDER[tierIndex]
 				end
 			end
 		end
-		if child:IsA("IntValue") and (child.Name == "Rarity" or child.Name == "rarity" or child.Name == "Tier" or child.Name == "tier") then
-			local tierIndex: number = math.clamp(child.Value, 1, #RARITY_ORDER)
-			return RARITY_ORDER[tierIndex]
+	end
+
+	-- 3) Check Configuration folder descendants
+	local config: Instance? = tool:FindFirstChild("Configuration")
+	if config then
+		for _, desc: Instance in ipairs(config:GetDescendants()) do
+			for _, rName: string in ipairs(rarityNames) do
+				if desc.Name == rName then
+					if desc:IsA("StringValue") then
+						local m: string? = matchRarity(desc.Value)
+						if m then return m end
+					elseif desc:IsA("IntValue") or desc:IsA("NumberValue") then
+						local tierIndex: number = math.clamp(math.floor(desc.Value + 0.5), 1, #RARITY_ORDER)
+						return RARITY_ORDER[tierIndex]
+					end
+				end
+			end
+			-- Also check attributes on Configuration descendants
+			if desc:IsA("Configuration") or desc:IsA("Folder") then
+				for _, attrName: string in ipairs(rarityNames) do
+					local attr: any = desc:GetAttribute(attrName)
+					if attr and type(attr) == "string" then
+						local m: string? = matchRarity(attr :: string)
+						if m then return m end
+					end
+				end
+			end
 		end
 	end
 
-	-- Check IntValue attributes
-	local rarityIntAttr: any = tool:GetAttribute("Rarity")
-	if rarityIntAttr and type(rarityIntAttr) == "number" then
-		local tierIndex: number = math.clamp(math.floor(rarityIntAttr :: number + 0.5), 1, #RARITY_ORDER)
-		return RARITY_ORDER[tierIndex]
+	-- 4) Check ALL descendants of the tool (deeper search for nested values)
+	for _, desc: Instance in ipairs(tool:GetDescendants()) do
+		for _, rName: string in ipairs(rarityNames) do
+			if desc.Name == rName then
+				if desc:IsA("StringValue") then
+					local m: string? = matchRarity(desc.Value)
+					if m then return m end
+				elseif desc:IsA("IntValue") or desc:IsA("NumberValue") then
+					local tierIndex: number = math.clamp(math.floor(desc.Value + 0.5), 1, #RARITY_ORDER)
+					return RARITY_ORDER[tierIndex]
+				end
+			end
+		end
+		-- Check attributes on any descendant
+		for _, attrName: string in ipairs(rarityNames) do
+			local attr: any = desc:GetAttribute(attrName)
+			if attr and type(attr) == "string" then
+				local m: string? = matchRarity(attr :: string)
+				if m then return m end
+			end
+		end
 	end
 
-	-- Fallback: guess from display name keywords (use getDisplayName for numeric Tool.Names)
+	-- 5) Fallback: guess from display name keywords
 	local nameToSearch: string = tool.Name
 	if tonumber(nameToSearch) then
 		nameToSearch = getDisplayName(tool)
 	end
 	local lower: string = nameToSearch:lower()
-	if lower:find("mythic") or lower:find("legendary") then
-		if lower:find("mythic") then return "Mythic" else return "Legendary" end
-	elseif lower:find("epic") or lower:find("rare") then
-		if lower:find("epic") then return "Epic" else return "Rare" end
-	elseif lower:find("uncommon") or lower:find("common") then
-		if lower:find("uncommon") then return "Uncommon" else return "Common" end
-	end
+	if lower:find("mythic") then return "Mythic" end
+	if lower:find("legend") then return "Legendary" end
+	if lower:find("epic") then return "Epic" end
+	if lower:find("rare") then return "Rare" end
+	if lower:find("uncommon") then return "Uncommon" end
 
 	return "Common"
 end
@@ -1078,23 +1153,30 @@ local function updateESP(): ()
 			esp.statsLabel.TextColor3 = Color3.fromRGB(255, 80, 80)
 		end
 
-		-- Items (Weapon: Rarety only, colored by rarity)
+		-- Items (Weapon: name + rarity, filter out Common, colored by rarity)
 		local toolList: { ToolInfo } = getToolList(targetPlayer)
-		if #toolList == 0 then
+		-- Filter out Common rarity
+		local filteredTools: { ToolInfo } = {}
+		for _, info: ToolInfo in ipairs(toolList) do
+			if info.rarity ~= "Common" then
+				table.insert(filteredTools, info)
+			end
+		end
+		if #filteredTools == 0 then
 			esp.itemLabel.Text = '<font color="#888888">Weapon:</font> None'
 		else
 			local display: string = '<font color="#888888">Weapon:</font> '
-			for i = 1, math.min(#toolList, 3) do
+			for i = 1, math.min(#filteredTools, 3) do
 				if i > 1 then
 					display ..= " | "
 				end
-				local toolInfo: ToolInfo = toolList[i]
+				local toolInfo: ToolInfo = filteredTools[i]
 				local color: Color3 = RARITY_COLORS[toolInfo.rarity] or RARITY_COLORS.Common
 				local hex: string = string.format("#%02X%02X%02X", math.floor(color.R * 255), math.floor(color.G * 255), math.floor(color.B * 255))
-				display ..= string.format('<font color="%s">%s</font>', hex, toolInfo.rarity)
+				display ..= string.format('<font color="%s">%s</font>', hex, toolInfo.name)
 			end
-			if #toolList > 3 then
-				display ..= string.format(' <font color="#888888">+%d</font>', #toolList - 3)
+			if #filteredTools > 3 then
+				display ..= string.format(' <font color="#888888">+%d</font>', #filteredTools - 3)
 			end
 			esp.itemLabel.Text = display
 		end
