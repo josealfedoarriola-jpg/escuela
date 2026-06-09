@@ -1,0 +1,1130 @@
+--!strict
+
+local player: Player = game:GetService("Players").LocalPlayer
+local playerGui: PlayerGui = player:WaitForChild("PlayerGui")
+local userInputService: UserInputService = game:GetService("UserInputService")
+local runService: RunService = game:GetService("RunService")
+local camera: Camera = workspace.CurrentCamera
+local playersService: Players = game:GetService("Players")
+
+local AIMBOT_KEY: EnumItem = Enum.KeyCode.F
+local MIN_FOV: number = 10
+local MAX_FOV: number = 180
+
+-- State
+local aimbotEnabled: boolean = false
+local espEnabled: boolean = true
+local fovSize: number = 90
+local excludedPlayers: { [Player]: boolean } = {}
+local espElements: { [Player]: { highlight: Highlight, billboard: BillboardGui, nameLabel: TextLabel, statsLabel: TextLabel, itemLabel: TextLabel } } = {}
+local pickItemsEnabled: boolean = false
+local guiMinimized: boolean = false
+
+-- === GUI ===
+-- Color palette
+local ACCENT = Color3.fromRGB(53, 186, 243)
+local ACCENT_DARK = Color3.fromRGB(22, 125, 168)
+local BG_DARK = Color3.fromRGB(18, 18, 24)
+local BG_PANEL = Color3.fromRGB(28, 28, 38)
+local BG_CARD = Color3.fromRGB(38, 38, 52)
+local BG_SLIDER = Color3.fromRGB(48, 48, 66)
+local GREEN_ON = Color3.fromRGB(80, 220, 120)
+local GREEN_ON_DARK = Color3.fromRGB(40, 160, 80)
+local RED_OFF = Color3.fromRGB(70, 70, 90)
+local TEXT_WHITE = Color3.fromRGB(240, 240, 255)
+local TEXT_DIM = Color3.fromRGB(160, 160, 185)
+local TEXT_LABEL = Color3.fromRGB(180, 185, 210)
+
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "AimbotGUI"
+screenGui.ResetOnSpawn = false
+screenGui.Parent = playerGui
+
+-- Main Frame (centered 0.5, 0.5)
+local mainFrame = Instance.new("Frame")
+mainFrame.Name = "MainFrame"
+mainFrame.Size = UDim2.new(0, 300, 0, 568)
+mainFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
+mainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+mainFrame.BackgroundColor3 = BG_PANEL
+mainFrame.BorderSizePixel = 0
+mainFrame.Parent = screenGui
+
+local mainCorner = Instance.new("UICorner")
+mainCorner.CornerRadius = UDim.new(0, 12)
+mainCorner.Parent = mainFrame
+
+local mainStroke = Instance.new("UIStroke")
+mainStroke.Color = Color3.fromRGB(50, 50, 70)
+mainStroke.Thickness = 1.5
+mainStroke.Transparency = 0.4
+mainStroke.Parent = mainFrame
+
+local mainPadding = Instance.new("UIPadding")
+mainPadding.PaddingTop = UDim.new(0, 6)
+mainPadding.PaddingBottom = UDim.new(0, 8)
+mainPadding.PaddingLeft = UDim.new(0, 10)
+mainPadding.PaddingRight = UDim.new(0, 10)
+mainPadding.Parent = mainFrame
+
+-- Title bar background
+local titleBar = Instance.new("Frame")
+titleBar.Name = "TitleBar"
+titleBar.Size = UDim2.new(1, 0, 0, 36)
+titleBar.BackgroundColor3 = BG_DARK
+titleBar.BackgroundTransparency = 0
+titleBar.BorderSizePixel = 0
+titleBar.Parent = mainFrame
+
+local titleBarCorner = Instance.new("UICorner")
+titleBarCorner.CornerRadius = UDim.new(0, 10)
+titleBarCorner.Parent = titleBar
+
+-- Title text
+local titleLabel = Instance.new("TextLabel")
+titleLabel.Name = "Title"
+titleLabel.Size = UDim2.new(1, -38, 1, 0)
+titleLabel.Position = UDim2.new(0, 10, 0, 0)
+titleLabel.BackgroundTransparency = 1
+titleLabel.Text = "Carlos Script"
+titleLabel.TextColor3 = ACCENT
+titleLabel.TextScaled = true
+titleLabel.Font = Enum.Font.GothamBold
+titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+titleLabel.Parent = titleBar
+
+-- Minimize button
+local minimizeBtn = Instance.new("TextButton")
+minimizeBtn.Name = "MinimizeBtn"
+minimizeBtn.Size = UDim2.new(0, 24, 0, 24)
+minimizeBtn.Position = UDim2.new(1, -30, 0, 6)
+minimizeBtn.BackgroundColor3 = Color3.fromRGB(220, 60, 60)
+minimizeBtn.Text = "-"
+minimizeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+minimizeBtn.TextScaled = true
+minimizeBtn.Font = Enum.Font.GothamBold
+minimizeBtn.BorderSizePixel = 0
+minimizeBtn.Parent = titleBar
+
+local minBtnCorner = Instance.new("UICorner")
+minBtnCorner.CornerRadius = UDim.new(0, 6)
+minBtnCorner.Parent = minimizeBtn
+
+local minBtnStroke = Instance.new("UIStroke")
+minBtnStroke.Color = Color3.fromRGB(180, 40, 40)
+minBtnStroke.Thickness = 1
+minBtnStroke.Parent = minimizeBtn
+
+-- Minimized bar (hidden by default)
+local minBar = Instance.new("Frame")
+minBar.Name = "MinimizedBar"
+minBar.Size = UDim2.new(0, 130, 0, 40)
+minBar.Position = UDim2.new(1, -140, 0, 6)
+minBar.BackgroundColor3 = BG_PANEL
+minBar.BorderSizePixel = 0
+minBar.Visible = false
+minBar.Parent = screenGui
+
+local minBarCorner = Instance.new("UICorner")
+minBarCorner.CornerRadius = UDim.new(0, 10)
+minBarCorner.Parent = minBar
+
+local minBarStroke = Instance.new("UIStroke")
+minBarStroke.Color = Color3.fromRGB(50, 50, 70)
+minBarStroke.Thickness = 1.5
+minBarStroke.Transparency = 0.4
+minBarStroke.Parent = minBar
+
+local minBarLabel = Instance.new("TextLabel")
+minBarLabel.Size = UDim2.new(1, -38, 1, 0)
+minBarLabel.Position = UDim2.new(0, 10, 0, 0)
+minBarLabel.BackgroundTransparency = 1
+minBarLabel.Text = "Abrir"
+minBarLabel.TextColor3 = ACCENT
+minBarLabel.TextScaled = true
+minBarLabel.Font = Enum.Font.GothamBold
+minBarLabel.TextXAlignment = Enum.TextXAlignment.Left
+minBarLabel.Parent = minBar
+
+local restoreBtn = Instance.new("TextButton")
+restoreBtn.Name = "RestoreBtn"
+restoreBtn.Size = UDim2.new(0, 28, 0, 28)
+restoreBtn.Position = UDim2.new(1, -34, 0, 6)
+restoreBtn.BackgroundColor3 = GREEN_ON
+restoreBtn.Text = "+"
+restoreBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+restoreBtn.TextScaled = true
+restoreBtn.Font = Enum.Font.GothamBold
+restoreBtn.BorderSizePixel = 0
+restoreBtn.Parent = minBar
+
+local resBtnCorner = Instance.new("UICorner")
+resBtnCorner.CornerRadius = UDim.new(0, 7)
+resBtnCorner.Parent = restoreBtn
+
+local resBtnStroke = Instance.new("UIStroke")
+resBtnStroke.Color = GREEN_ON_DARK
+resBtnStroke.Thickness = 1
+resBtnStroke.Parent = restoreBtn
+
+-- Aimbot Toggle
+local aimbotBtn = Instance.new("TextButton")
+aimbotBtn.Name = "AimbotToggle"
+aimbotBtn.Size = UDim2.new(0.85, 0, 0, 42)
+aimbotBtn.Position = UDim2.new(0.075, 0, 0, 44)
+aimbotBtn.BackgroundColor3 = RED_OFF
+aimbotBtn.Text = "Aimbot: OFF [F]"
+aimbotBtn.TextColor3 = TEXT_DIM
+aimbotBtn.TextScaled = true
+aimbotBtn.Font = Enum.Font.GothamBold
+aimbotBtn.BorderSizePixel = 0
+aimbotBtn.Parent = mainFrame
+
+local aimbotBtnCorner = Instance.new("UICorner")
+aimbotBtnCorner.CornerRadius = UDim.new(0, 8)
+aimbotBtnCorner.Parent = aimbotBtn
+
+local aimbotBtnStroke = Instance.new("UIStroke")
+aimbotBtnStroke.Color = Color3.fromRGB(55, 55, 75)
+aimbotBtnStroke.Thickness = 1.2
+aimbotBtnStroke.Parent = aimbotBtn
+
+-- ESP Toggle
+local espBtn = Instance.new("TextButton")
+espBtn.Name = "ESPToggle"
+espBtn.Size = UDim2.new(0.85, 0, 0, 42)
+espBtn.Position = UDim2.new(0.075, 0, 0, 92)
+espBtn.BackgroundColor3 = GREEN_ON
+espBtn.Text = "ESP: ON"
+espBtn.TextColor3 = TEXT_WHITE
+espBtn.TextScaled = true
+espBtn.Font = Enum.Font.GothamBold
+espBtn.BorderSizePixel = 0
+espBtn.Parent = mainFrame
+
+local espBtnCorner = Instance.new("UICorner")
+espBtnCorner.CornerRadius = UDim.new(0, 8)
+espBtnCorner.Parent = espBtn
+
+local espBtnStroke = Instance.new("UIStroke")
+espBtnStroke.Color = GREEN_ON_DARK
+espBtnStroke.Thickness = 1.2
+espBtnStroke.Parent = espBtn
+
+local espBtnGradient = Instance.new("UIGradient")
+espBtnGradient.Color = ColorSequence.new({
+	ColorSequenceKeypoint.new(0, Color3.fromRGB(90, 230, 130)),
+	ColorSequenceKeypoint.new(1, Color3.fromRGB(50, 180, 90)),
+})
+espBtnGradient.Rotation = 90
+espBtnGradient.Parent = espBtn
+
+-- Pick Items Toggle
+local pickItemsBtn = Instance.new("TextButton")
+pickItemsBtn.Name = "PickItemsToggle"
+pickItemsBtn.Size = UDim2.new(0.85, 0, 0, 42)
+pickItemsBtn.Position = UDim2.new(0.075, 0, 0, 140)
+pickItemsBtn.BackgroundColor3 = RED_OFF
+pickItemsBtn.Text = "Pick Items: OFF"
+pickItemsBtn.TextColor3 = TEXT_DIM
+pickItemsBtn.TextScaled = true
+pickItemsBtn.Font = Enum.Font.GothamBold
+pickItemsBtn.BorderSizePixel = 0
+pickItemsBtn.Parent = mainFrame
+
+local pickItemsBtnCorner = Instance.new("UICorner")
+pickItemsBtnCorner.CornerRadius = UDim.new(0, 8)
+pickItemsBtnCorner.Parent = pickItemsBtn
+
+local pickItemsBtnStroke = Instance.new("UIStroke")
+pickItemsBtnStroke.Color = Color3.fromRGB(55, 55, 75)
+pickItemsBtnStroke.Thickness = 1.2
+pickItemsBtnStroke.Parent = pickItemsBtn
+
+-- FOV Label
+local fovLabel = Instance.new("TextLabel")
+fovLabel.Name = "FOVLabel"
+fovLabel.Size = UDim2.new(0.85, 0, 0, 26)
+fovLabel.Position = UDim2.new(0.075, 0, 0, 190)
+fovLabel.BackgroundTransparency = 1
+fovLabel.Text = "FOV: 90"
+fovLabel.TextColor3 = TEXT_LABEL
+fovLabel.TextScaled = true
+fovLabel.Font = Enum.Font.GothamMedium
+fovLabel.TextXAlignment = Enum.TextXAlignment.Left
+fovLabel.Parent = mainFrame
+
+-- FOV Slider Track
+local sliderTrack = Instance.new("Frame")
+sliderTrack.Name = "SliderTrack"
+sliderTrack.Size = UDim2.new(0.85, 0, 0, 8)
+sliderTrack.Position = UDim2.new(0.075, 0, 0, 220)
+sliderTrack.BackgroundColor3 = BG_SLIDER
+sliderTrack.BorderSizePixel = 0
+sliderTrack.Parent = mainFrame
+
+local trackCorner = Instance.new("UICorner")
+trackCorner.CornerRadius = UDim.new(0, 4)
+trackCorner.Parent = sliderTrack
+
+-- FOV Slider Fill (colored progress bar)
+local sliderFill = Instance.new("Frame")
+sliderFill.Name = "SliderFill"
+sliderFill.Size = UDim2.new(0.5, 0, 1, 0)
+sliderFill.BackgroundColor3 = ACCENT
+sliderFill.BorderSizePixel = 0
+sliderFill.Parent = sliderTrack
+
+local fillCorner = Instance.new("UICorner")
+fillCorner.CornerRadius = UDim.new(0, 4)
+fillCorner.Parent = sliderFill
+
+local fillGradient = Instance.new("UIGradient")
+fillGradient.Color = ColorSequence.new({
+	ColorSequenceKeypoint.new(0, Color3.fromRGB(80, 200, 255)),
+	ColorSequenceKeypoint.new(1, ACCENT),
+})
+fillGradient.Rotation = 90
+fillGradient.Parent = sliderFill
+
+-- FOV Slider Thumb
+local sliderThumb = Instance.new("Frame")
+sliderThumb.Name = "SliderThumb"
+sliderThumb.Size = UDim2.new(0, 20, 0, 20)
+sliderThumb.Position = UDim2.new(0.5, -10, 0, -6)
+sliderThumb.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+sliderThumb.BorderSizePixel = 0
+sliderThumb.Parent = sliderTrack
+
+local thumbCorner = Instance.new("UICorner")
+thumbCorner.CornerRadius = UDim.new(0, 10)
+thumbCorner.Parent = sliderThumb
+
+local thumbStroke = Instance.new("UIStroke")
+thumbStroke.Color = ACCENT
+thumbStroke.Thickness = 2
+thumbStroke.Parent = sliderThumb
+
+-- Players label
+local playerListLabel = Instance.new("TextLabel")
+playerListLabel.Name = "PlayerListLabel"
+playerListLabel.Size = UDim2.new(0.85, 0, 0, 26)
+playerListLabel.Position = UDim2.new(0.075, 0, 0, 240)
+playerListLabel.BackgroundTransparency = 1
+playerListLabel.Text = "Players (click to exclude)"
+playerListLabel.TextColor3 = TEXT_LABEL
+playerListLabel.TextScaled = true
+playerListLabel.Font = Enum.Font.GothamMedium
+playerListLabel.TextXAlignment = Enum.TextXAlignment.Left
+playerListLabel.Parent = mainFrame
+
+-- Refresh button
+local refreshButton = Instance.new("TextButton")
+refreshButton.Name = "RefreshButton"
+refreshButton.Size = UDim2.new(0, 26, 0, 26)
+refreshButton.Position = UDim2.new(0.85, -10, 0, 240)
+refreshButton.BackgroundColor3 = ACCENT
+refreshButton.Text = "R"
+refreshButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+refreshButton.TextScaled = true
+refreshButton.Font = Enum.Font.GothamBold
+refreshButton.BorderSizePixel = 0
+refreshButton.Parent = mainFrame
+
+local refreshCorner = Instance.new("UICorner")
+refreshCorner.CornerRadius = UDim.new(0, 7)
+refreshCorner.Parent = refreshButton
+
+local refreshStroke = Instance.new("UIStroke")
+refreshStroke.Color = ACCENT_DARK
+refreshStroke.Thickness = 1
+refreshStroke.Parent = refreshButton
+
+-- Player list scrolling frame
+local playerScroll = Instance.new("ScrollingFrame")
+playerScroll.Name = "PlayerScroll"
+playerScroll.Size = UDim2.new(0.9, 0, 0, 265)
+playerScroll.Position = UDim2.new(0.05, 0, 0, 272)
+playerScroll.BackgroundColor3 = BG_CARD
+playerScroll.BackgroundTransparency = 0.15
+playerScroll.BorderSizePixel = 0
+playerScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+playerScroll.ScrollBarThickness = 3
+playerScroll.ScrollBarImageColor3 = ACCENT
+playerScroll.ScrollBarImageTransparency = 0.4
+playerScroll.Parent = mainFrame
+
+local scrollCorner = Instance.new("UICorner")
+scrollCorner.CornerRadius = UDim.new(0, 8)
+scrollCorner.Parent = playerScroll
+
+local scrollStroke = Instance.new("UIStroke")
+scrollStroke.Color = Color3.fromRGB(55, 55, 75)
+scrollStroke.Thickness = 1
+scrollStroke.Transparency = 0.5
+scrollStroke.Parent = playerScroll
+
+local scrollPadding = Instance.new("UIPadding")
+scrollPadding.PaddingTop = UDim.new(0, 4)
+scrollPadding.PaddingBottom = UDim.new(0, 4)
+scrollPadding.PaddingLeft = UDim.new(0, 4)
+scrollPadding.PaddingRight = UDim.new(0, 4)
+scrollPadding.Parent = playerScroll
+
+-- FOV Circle Overlay (on screen)
+local fovOverlay = Instance.new("Frame")
+fovOverlay.Name = "FOVOverlay"
+fovOverlay.Size = UDim2.new(0, fovSize * 2, 0, fovSize * 2)
+fovOverlay.Position = UDim2.new(0.5, -fovSize, 0.5, -fovSize)
+fovOverlay.BackgroundTransparency = 1
+fovOverlay.BorderSizePixel = 0
+fovOverlay.Parent = screenGui
+
+local fovCircle = Instance.new("Frame")
+fovCircle.Name = "FOVCircle"
+fovCircle.Size = UDim2.new(1, 0, 1, 0)
+fovCircle.BackgroundTransparency = 0.92
+fovCircle.BackgroundColor3 = ACCENT
+fovCircle.BorderSizePixel = 0
+fovCircle.Parent = fovOverlay
+
+local fovCircleCorner = Instance.new("UICorner")
+fovCircleCorner.CornerRadius = UDim.new(0.5, 0)
+fovCircleCorner.Parent = fovCircle
+
+local fovStroke = Instance.new("UIStroke")
+fovStroke.Color = ACCENT
+fovStroke.Thickness = 2
+fovStroke.Transparency = 0.2
+fovStroke.Parent = fovCircle
+
+-- === GUI Functions ===
+
+local function updateFOVOverlay(): ()
+	fovOverlay.Size = UDim2.new(0, fovSize * 2, 0, fovSize * 2)
+	fovOverlay.Position = UDim2.new(0.5, -fovSize, 0.5, -fovSize)
+	fovLabel.Text = "FOV: " .. tostring(fovSize)
+end
+
+local function refreshPlayerList(): ()
+	for _, child in ipairs(playerScroll:GetChildren()) do
+		if child:IsA("TextButton") then
+			child:Destroy()
+		end
+	end
+
+	local players: { Player } = playersService:GetPlayers()
+	local yPos: number = 0
+
+	for _, p: Player in ipairs(players) do
+		if p == player then
+			continue
+		end
+
+		local isExcluded: boolean = excludedPlayers[p] == true
+		local btnColor: Color3 = isExcluded and Color3.fromRGB(120, 45, 45) or Color3.fromRGB(48, 48, 64)
+		local btnTextColor: Color3 = isExcluded and Color3.fromRGB(255, 120, 120) or TEXT_WHITE
+		local btnText: string = p.Name .. (isExcluded and " [EXCLUDED]" or "")
+
+		local playerBtn = Instance.new("TextButton")
+		playerBtn.Name = p.Name
+		playerBtn.Size = UDim2.new(1, -6, 0, 30)
+		playerBtn.Position = UDim2.new(0, 3, 0, yPos)
+		playerBtn.BackgroundColor3 = btnColor
+		playerBtn.Text = btnText
+		playerBtn.TextColor3 = btnTextColor
+		playerBtn.TextScaled = true
+		playerBtn.Font = Enum.Font.GothamMedium
+		playerBtn.BorderSizePixel = 0
+		playerBtn.TextXAlignment = Enum.TextXAlignment.Left
+		playerBtn.Parent = playerScroll
+
+		local btnCorner = Instance.new("UICorner")
+		btnCorner.CornerRadius = UDim.new(0, 6)
+		btnCorner.Parent = playerBtn
+
+		local btnStroke = Instance.new("UIStroke")
+		btnStroke.Color = isExcluded and Color3.fromRGB(160, 50, 50) or Color3.fromRGB(60, 60, 80)
+		btnStroke.Thickness = 1
+		btnStroke.Transparency = 0.4
+		btnStroke.Parent = playerBtn
+
+		playerBtn.MouseButton1Click:Connect(function()
+			if excludedPlayers[p] then
+				excludedPlayers[p] = nil
+			else
+				excludedPlayers[p] = true
+			end
+			refreshPlayerList()
+		end)
+
+		yPos += 36
+	end
+
+	playerScroll.CanvasSize = UDim2.new(0, 0, 0, yPos + 4)
+end
+
+-- === Aimbot ===
+
+local function toggleAimbot(): ()
+	if keyHeld then
+		return
+	end
+	aimbotEnabled = not aimbotEnabled
+	if aimbotEnabled then
+		aimbotBtn.BackgroundColor3 = GREEN_ON
+		aimbotBtn.TextColor3 = TEXT_WHITE
+		aimbotBtnStroke.Color = GREEN_ON_DARK
+		aimbotBtn.Text = "Aimbot: ON [F]"
+		local grad = aimbotBtn:FindFirstChildOfClass("UIGradient")
+		if not grad then
+			grad = Instance.new("UIGradient")
+			grad.Color = ColorSequence.new({
+				ColorSequenceKeypoint.new(0, Color3.fromRGB(90, 230, 130)),
+				ColorSequenceKeypoint.new(1, Color3.fromRGB(50, 180, 90)),
+			})
+			grad.Rotation = 90
+			grad.Parent = aimbotBtn
+		end
+	else
+		aimbotBtn.BackgroundColor3 = RED_OFF
+		aimbotBtn.TextColor3 = TEXT_DIM
+		aimbotBtnStroke.Color = Color3.fromRGB(55, 55, 75)
+		aimbotBtn.Text = "Aimbot: OFF [F]"
+		local grad = aimbotBtn:FindFirstChildOfClass("UIGradient")
+		if grad then
+			grad:Destroy()
+		end
+	end
+end
+
+local function getClosestTarget(): (Player?, Vector3?)
+	local closestPlayer: Player? = nil
+	local closestDistance: number = math.huge
+	local targetPosition: Vector3? = nil
+
+	local cameraPos: Vector3 = camera.CFrame.Position
+	local screenCenter: Vector2 = Vector2.new(camera.ViewportSize.X / 2, camera.ViewportSize.Y / 2)
+
+	local players: { Player } = playersService:GetPlayers()
+
+	for _, otherPlayer: Player in ipairs(players) do
+		if otherPlayer == player then
+			continue
+		end
+		if excludedPlayers[otherPlayer] then
+			continue
+		end
+
+		local character: Model? = otherPlayer.Character
+		if not character then
+			continue
+		end
+
+		local head: BasePart? = character:FindFirstChild("Head")
+		if not head then
+			continue
+		end
+
+		local headPos: Vector3 = head.CFrame.Position
+		local screenPos: Vector3, onScreen: boolean = camera:WorldToScreenPoint(headPos)
+		if not onScreen then
+			continue
+		end
+
+		local distanceFromCenter: number = (Vector2.new(screenPos.X, screenPos.Y) - screenCenter).Magnitude
+		if distanceFromCenter <= fovSize then
+			local distance: number = (headPos - cameraPos).Magnitude
+			if distance < closestDistance then
+				closestDistance = distance
+				closestPlayer = otherPlayer
+				targetPosition = headPos
+			end
+		end
+	end
+
+	return closestPlayer, targetPosition
+end
+
+-- === ESP ===
+
+local RARITY_COLORS: { [string]: Color3 } = {
+	Common = Color3.fromRGB(170, 170, 170),
+	Uncommon = Color3.fromRGB(85, 255, 85),
+	Rare = Color3.fromRGB(85, 170, 255),
+	Epic = Color3.fromRGB(170, 85, 255),
+	Legendary = Color3.fromRGB(255, 255, 85),
+	Mythic = Color3.fromRGB(255, 85, 85),
+}
+
+local RARITY_ORDER: { string } = { "Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic" }
+
+local function cleanToolName(name: string): string
+	local cleaned: string = name
+	local prefixes: { string } = { "tools_cinder_", "tool_", "cinder_", "weapon_", "item_", "tools_", "gear_", "weapons_" }
+	for _, prefix: string in ipairs(prefixes) do
+		if cleaned:lower():sub(1, #prefix) == prefix then
+			cleaned = cleaned:sub(#prefix + 1)
+			break
+		end
+	end
+	cleaned = cleaned:gsub("[_-]", " ")
+	cleaned = cleaned:gsub("%s+", " ")
+	cleaned = cleaned:sub(1, 1):upper() .. cleaned:sub(2)
+	return cleaned
+end
+
+local function getRarity(tool: Tool): string
+	-- Check Rarity attribute (common in many weapon systems)
+	local rarity: any = tool:GetAttribute("Rarity")
+	if rarity and type(rarity) == "string" then
+		local r: string = rarity:sub(1, 1):upper() .. rarity:sub(2):lower()
+		for _, tier: string in ipairs(RARITY_ORDER) do
+			if r == tier then
+				return tier
+			end
+		end
+	end
+
+	-- Check Rarity StringValue child
+	for _, child: Instance in ipairs(tool:GetChildren()) do
+		if child:IsA("StringValue") and (child.Name == "Rarity" or child.Name == "rarity" or child.Name == "Tier" or child.Name == "tier") then
+			local r: string = child.Value:sub(1, 1):upper() .. child.Value:sub(2):lower()
+			for _, tier: string in ipairs(RARITY_ORDER) do
+				if r == tier then
+					return tier
+				end
+			end
+		end
+		if child:IsA("IntValue") and (child.Name == "Rarity" or child.Name == "rarity" or child.Name == "Tier" or child.Name == "tier") then
+			local tierIndex: number = math.clamp(child.Value, 1, #RARITY_ORDER)
+			return RARITY_ORDER[tierIndex]
+		end
+	end
+
+	-- Check IntValue attributes
+	local rarityIntAttr: any = tool:GetAttribute("Rarity")
+	if rarityIntAttr and type(rarityIntAttr) == "number" then
+		local tierIndex: number = math.clamp(math.floor(rarityIntAttr :: number + 0.5), 1, #RARITY_ORDER)
+		return RARITY_ORDER[tierIndex]
+	end
+
+	-- Fallback: guess from name keywords
+	local lower: string = tool.Name:lower()
+	if lower:find("mythic") or lower:find("legendary") then
+		if lower:find("mythic") then return "Mythic" else return "Legendary" end
+	elseif lower:find("epic") or lower:find("rare") then
+		if lower:find("epic") then return "Epic" else return "Rare" end
+	elseif lower:find("uncommon") or lower:find("common") then
+		if lower:find("uncommon") then return "Uncommon" else return "Common" end
+	end
+
+	return "Common"
+end
+
+type ToolInfo = { name: string, rarity: string }
+
+local function getToolList(targetPlayer: Player): { ToolInfo }
+	local tools: { ToolInfo } = {}
+
+	local character: Model? = targetPlayer.Character
+	if character then
+		for _, child: Instance in ipairs(character:GetChildren()) do
+			if child:IsA("Tool") then
+				table.insert(tools, { name = cleanToolName(child.Name), rarity = getRarity(child :: Tool) })
+			end
+		end
+	end
+
+	local backpack: Backpack? = targetPlayer:FindFirstChildOfClass("Backpack")
+	if backpack then
+		for _, child: Instance in ipairs(backpack:GetChildren()) do
+			if child:IsA("Tool") then
+				table.insert(tools, { name = cleanToolName(child.Name), rarity = getRarity(child :: Tool) })
+			end
+		end
+	end
+
+	return tools
+end
+
+local function createESP(targetPlayer: Player): ()
+	if targetPlayer == player then
+		return
+	end
+	if espElements[targetPlayer] then
+		return
+	end
+
+	local character: Model? = targetPlayer.Character
+	if not character then
+		return
+	end
+
+	-- Highlight
+	local highlight = Instance.new("Highlight")
+	highlight.Name = "ESP_Highlight"
+	highlight.Adornee = character
+	highlight.FillColor = Color3.fromRGB(255, 100, 100)
+	highlight.OutlineColor = Color3.fromRGB(255, 200, 200)
+	highlight.FillTransparency = 0.55
+	highlight.OutlineTransparency = 0.2
+	highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+	highlight.Parent = character
+
+	-- BillboardGui
+	local billboard = Instance.new("BillboardGui")
+	billboard.Name = "ESP_Billboard"
+	billboard.Size = UDim2.new(0, 150, 0, 50)
+	billboard.StudsOffsetWorldSpace = Vector3.new(0, 3, 0)
+	billboard.AlwaysOnTop = true
+	billboard.ClipsDescendants = false
+
+	local nameLabel = Instance.new("TextLabel")
+	nameLabel.Name = "Name"
+	nameLabel.Size = UDim2.new(1, 0, 0, 18)
+	nameLabel.BackgroundTransparency = 1
+	nameLabel.Text = targetPlayer.Name
+	nameLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+	nameLabel.TextScaled = true
+	nameLabel.Font = Enum.Font.GothamBold
+	nameLabel.TextStrokeTransparency = 0.4
+	nameLabel.Parent = billboard
+
+	local statsLabel = Instance.new("TextLabel")
+	statsLabel.Name = "Stats"
+	statsLabel.Size = UDim2.new(1, 0, 0, 16)
+	statsLabel.Position = UDim2.new(0, 0, 0, 18)
+	statsLabel.BackgroundTransparency = 1
+	statsLabel.Text = "HP: 100 | 0m"
+	statsLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+	statsLabel.TextScaled = true
+	statsLabel.Font = Enum.Font.GothamMedium
+	statsLabel.TextStrokeTransparency = 0.5
+	statsLabel.Parent = billboard
+
+	local itemLabel = Instance.new("TextLabel")
+	itemLabel.Name = "Item"
+	itemLabel.Size = UDim2.new(1, 0, 0, 16)
+	itemLabel.Position = UDim2.new(0, 0, 0, 34)
+	itemLabel.BackgroundTransparency = 1
+	itemLabel.Text = "None"
+	itemLabel.TextColor3 = Color3.fromRGB(255, 200, 80)
+	itemLabel.TextScaled = true
+	itemLabel.RichText = true
+	itemLabel.Font = Enum.Font.GothamMedium
+	itemLabel.TextStrokeTransparency = 0.5
+	itemLabel.Parent = billboard
+
+	local head: BasePart? = character:FindFirstChild("Head")
+	if head then
+		billboard.Parent = head
+	else
+		local root: BasePart? = character:FindFirstChild("HumanoidRootPart")
+		if root then
+			billboard.StudsOffsetWorldSpace = Vector3.new(0, 0, 0)
+			billboard.Parent = root
+		end
+	end
+
+	espElements[targetPlayer] = {
+		highlight = highlight,
+		billboard = billboard,
+		nameLabel = nameLabel,
+		statsLabel = statsLabel,
+		itemLabel = itemLabel,
+	}
+
+	-- If ESP is disabled, hide it immediately
+	if not espEnabled then
+		highlight.Enabled = false
+		billboard.Enabled = false
+	end
+end
+
+local function removeESP(targetPlayer: Player): ()
+	local esp = espElements[targetPlayer]
+	if not esp then
+		return
+	end
+
+	esp.highlight:Destroy()
+	esp.billboard:Destroy()
+	espElements[targetPlayer] = nil
+end
+
+local function updateESP(): ()
+	if not espEnabled then
+		return
+	end
+
+	local cameraPos: Vector3 = camera.CFrame.Position
+
+	for targetPlayer, esp in espElements do
+		local character: Model? = targetPlayer.Character
+		if not character then
+			removeESP(targetPlayer)
+			continue
+		end
+
+		local humanoid: Humanoid? = character:FindFirstChildOfClass("Humanoid")
+		local head: BasePart? = character:FindFirstChild("Head")
+
+		if not humanoid or not head then
+			esp.statsLabel.Text = "HP: ? | Dist: ?"
+			continue
+		end
+
+		-- Health + distance combined
+		local health: number = math.floor(humanoid.Health + 0.5)
+		local maxHealth: number = math.floor(humanoid.MaxHealth + 0.5)
+		local dist: number = math.floor((head.Position - cameraPos).Magnitude + 0.5)
+		esp.statsLabel.Text = "HP: " .. tostring(health) .. "/" .. tostring(maxHealth) .. " | " .. tostring(dist) .. "m"
+
+		if health > 60 then
+			esp.statsLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
+		elseif health > 30 then
+			esp.statsLabel.TextColor3 = Color3.fromRGB(255, 200, 50)
+		else
+			esp.statsLabel.TextColor3 = Color3.fromRGB(255, 80, 80)
+		end
+
+		-- Items (up to 3 tools from equipped + backpack, colored by rarity)
+		local toolList: { ToolInfo } = getToolList(targetPlayer)
+		if #toolList == 0 then
+			esp.itemLabel.Text = "None"
+		else
+			local display: string = ""
+			for i = 1, math.min(#toolList, 3) do
+				if i > 1 then
+					display ..= ", "
+				end
+				local toolInfo: ToolInfo = toolList[i]
+				local color: Color3 = RARITY_COLORS[toolInfo.rarity] or RARITY_COLORS.Common
+				local hex: string = string.format("#%02X%02X%02X", math.floor(color.R * 255), math.floor(color.G * 255), math.floor(color.B * 255))
+				display ..= string.format('<font color="%s">%s</font>', hex, toolInfo.name)
+			end
+			if #toolList > 3 then
+				display ..= string.format(' +%d', #toolList - 3)
+			end
+			esp.itemLabel.Text = display
+		end
+
+		-- Re-parent billboard if character respawned
+		if esp.billboard.Parent ~= head then
+			esp.billboard.Parent = head
+			esp.billboard.StudsOffsetWorldSpace = Vector3.new(0, 3.5, 0)
+		end
+
+		-- Update highlight Adornee if character changed
+		if esp.highlight.Adornee ~= character then
+			esp.highlight.Adornee = character
+		end
+	end
+end
+
+local function toggleESP(): ()
+	espEnabled = not espEnabled
+	if espEnabled then
+		espBtn.BackgroundColor3 = GREEN_ON
+		espBtn.TextColor3 = TEXT_WHITE
+		espBtnStroke.Color = GREEN_ON_DARK
+		espBtn.Text = "ESP: ON"
+		local grad = espBtn:FindFirstChildOfClass("UIGradient")
+		if not grad then
+			grad = Instance.new("UIGradient")
+			grad.Color = ColorSequence.new({
+				ColorSequenceKeypoint.new(0, Color3.fromRGB(90, 230, 130)),
+				ColorSequenceKeypoint.new(1, Color3.fromRGB(50, 180, 90)),
+			})
+			grad.Rotation = 90
+			grad.Parent = espBtn
+		end
+	else
+		espBtn.BackgroundColor3 = RED_OFF
+		espBtn.TextColor3 = TEXT_DIM
+		espBtnStroke.Color = Color3.fromRGB(55, 55, 75)
+		espBtn.Text = "ESP: OFF"
+		local grad = espBtn:FindFirstChildOfClass("UIGradient")
+		if grad then
+			grad:Destroy()
+		end
+	end
+
+	for _, esp in espElements do
+		esp.highlight.Enabled = espEnabled
+		esp.billboard.Enabled = espEnabled
+	end
+end
+
+-- === Pick Items ===
+
+local PICK_RADIUS: number = 80
+local PICK_INTERVAL: number = 0.1
+
+local function togglePickItems(): ()
+	pickItemsEnabled = not pickItemsEnabled
+	if pickItemsEnabled then
+		pickItemsBtn.BackgroundColor3 = GREEN_ON
+		pickItemsBtn.TextColor3 = TEXT_WHITE
+		pickItemsBtnStroke.Color = GREEN_ON_DARK
+		pickItemsBtn.Text = "Pick Items: ON"
+		local grad = pickItemsBtn:FindFirstChildOfClass("UIGradient")
+		if not grad then
+			grad = Instance.new("UIGradient")
+			grad.Color = ColorSequence.new({
+				ColorSequenceKeypoint.new(0, Color3.fromRGB(90, 230, 130)),
+				ColorSequenceKeypoint.new(1, Color3.fromRGB(50, 180, 90)),
+			})
+			grad.Rotation = 90
+			grad.Parent = pickItemsBtn
+		end
+		print("[PickItems] Enabled - auto-picking dropped items")
+	else
+		pickItemsBtn.BackgroundColor3 = RED_OFF
+		pickItemsBtn.TextColor3 = TEXT_DIM
+		pickItemsBtnStroke.Color = Color3.fromRGB(55, 55, 75)
+		pickItemsBtn.Text = "Pick Items: OFF"
+		local grad = pickItemsBtn:FindFirstChildOfClass("UIGradient")
+		if grad then
+			grad:Destroy()
+		end
+		print("[PickItems] Disabled")
+	end
+end
+
+local function findDroppedItems(): { Tool }
+	local items: { Tool } = {}
+	for _, obj: Instance in ipairs(workspace:GetDescendants()) do
+		if obj:IsA("Tool") then
+			local tool: Tool = obj :: Tool
+			if not tool.Parent then
+				continue
+			end
+			if tool.Parent == player.Character or tool.Parent == player:FindFirstChildOfClass("Backpack") then
+				continue
+			end
+			if tool.Parent:IsA("Model") and playersService:GetPlayerFromCharacter(tool.Parent) then
+				continue
+			end
+			table.insert(items, tool)
+		end
+	end
+	return items
+end
+
+local function pickItemsLoop(): ()
+	while pickItemsEnabled do
+		local character: Model? = player.Character
+		if character then
+			local rootPart: BasePart? = character:FindFirstChild("HumanoidRootPart")
+			if rootPart then
+				local playerPos: Vector3 = rootPart.Position
+				local items: { Tool } = findDroppedItems()
+				local closestTool: Tool? = nil
+				local closestDist: number = math.huge
+				for _, tool: Tool in ipairs(items) do
+					if not tool.Parent then
+						continue
+					end
+					local handle: BasePart? = tool:FindFirstChild("Handle")
+					if not handle then
+						continue
+					end
+					local dist: number = (handle.Position - playerPos).Magnitude
+					if dist < closestDist and dist <= PICK_RADIUS then
+						closestDist = dist
+						closestTool = tool
+					end
+				end
+				if closestTool then
+					local humanoid: Humanoid? = character:FindFirstChildOfClass("Humanoid")
+					if humanoid then
+						humanoid:EquipTool(closestTool)
+					end
+				end
+			end
+		end
+		task.wait(PICK_INTERVAL)
+	end
+end
+
+-- === Minimize / Restore ===
+
+local function minimizeGUI(): ()
+	guiMinimized = true
+	mainFrame.Visible = false
+	minBar.Visible = true
+end
+
+local function restoreGUI(): ()
+	guiMinimized = false
+	mainFrame.Visible = true
+	minBar.Visible = false
+end
+
+local function setupESPForCharacter(targetPlayer: Player): ()
+	-- Clean up old ESP if it exists
+	if espElements[targetPlayer] then
+		removeESP(targetPlayer)
+	end
+
+	-- Create new ESP (creates for the latest character)
+	task.wait(0.3)
+	createESP(targetPlayer)
+end
+
+-- === Connections ===
+
+-- Minimize / Restore
+minimizeBtn.MouseButton1Click:Connect(minimizeGUI)
+restoreBtn.MouseButton1Click:Connect(restoreGUI)
+
+-- Aimbot toggle (solo la tecla E controla el aimbot)
+
+-- ESP toggle
+espBtn.MouseButton1Click:Connect(toggleESP)
+
+-- Pick Items toggle
+pickItemsBtn.MouseButton1Click:Connect(function()
+	togglePickItems()
+	if pickItemsEnabled then
+		task.spawn(pickItemsLoop)
+	end
+end)
+
+-- Refresh player list
+refreshButton.MouseButton1Click:Connect(refreshPlayerList)
+
+-- Keybind (hold E to activate, release to deactivate)
+local keyHeld: boolean = false
+
+userInputService.InputBegan:Connect(function(input: InputObject, gameProcessed: boolean)
+	if gameProcessed then
+		return
+	end
+	if input.KeyCode == AIMBOT_KEY then
+		keyHeld = true
+		if not aimbotEnabled then
+			aimbotEnabled = true
+			aimbotBtn.BackgroundColor3 = GREEN_ON
+			aimbotBtn.TextColor3 = TEXT_WHITE
+			aimbotBtnStroke.Color = GREEN_ON_DARK
+			aimbotBtn.Text = "Aimbot: ON [F]"
+			local grad = aimbotBtn:FindFirstChildOfClass("UIGradient")
+			if not grad then
+				grad = Instance.new("UIGradient")
+				grad.Color = ColorSequence.new({
+					ColorSequenceKeypoint.new(0, Color3.fromRGB(90, 230, 130)),
+					ColorSequenceKeypoint.new(1, Color3.fromRGB(50, 180, 90)),
+				})
+				grad.Rotation = 90
+				grad.Parent = aimbotBtn
+			end
+		end
+	end
+end)
+
+userInputService.InputEnded:Connect(function(input: InputObject)
+	if input.KeyCode == AIMBOT_KEY then
+		keyHeld = false
+		if aimbotEnabled then
+			aimbotEnabled = false
+			aimbotBtn.BackgroundColor3 = RED_OFF
+			aimbotBtn.TextColor3 = TEXT_DIM
+			aimbotBtnStroke.Color = Color3.fromRGB(55, 55, 75)
+			aimbotBtn.Text = "Aimbot: OFF [F]"
+			local grad = aimbotBtn:FindFirstChildOfClass("UIGradient")
+			if grad then
+				grad:Destroy()
+			end
+		end
+	end
+end)
+
+-- Slider drag
+local draggingSlider: boolean = false
+
+sliderThumb.InputBegan:Connect(function(input: InputObject)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 then
+		draggingSlider = true
+	end
+end)
+
+sliderThumb.InputEnded:Connect(function(input: InputObject)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 then
+		draggingSlider = false
+	end
+end)
+
+userInputService.InputChanged:Connect(function(input: InputObject)
+	if not draggingSlider then
+		return
+	end
+	if input.UserInputType ~= Enum.UserInputType.MouseMovement then
+		return
+	end
+
+	local absPos: Vector2 = sliderTrack.AbsolutePosition
+	local absSize: number = sliderTrack.AbsoluteSize.X
+	local mouseX: number = userInputService:GetMouseLocation().X
+	local ratio: number = math.clamp((mouseX - absPos.X) / absSize, 0, 1)
+
+	fovSize = math.floor(MIN_FOV + ratio * (MAX_FOV - MIN_FOV))
+	sliderThumb.Position = UDim2.new(ratio, -10, 0, -6)
+	sliderFill.Size = UDim2.new(ratio, 0, 1, 0)
+	updateFOVOverlay()
+end)
+
+-- Main render loop (aimbot + ESP update)
+local renderConnection: RBXScriptConnection = runService.RenderStepped:Connect(function()
+	-- Aimbot: just rotates camera, no CameraType change
+	if aimbotEnabled then
+		local _, targetPos: Vector3? = getClosestTarget()
+		if targetPos then
+			local cameraPos: Vector3 = camera.CFrame.Position
+			camera.CFrame = CFrame.lookAt(cameraPos, targetPos)
+		end
+	end
+
+	-- ESP update
+	updateESP()
+end)
+
+-- Player join: add ESP
+playersService.PlayerAdded:Connect(function(newPlayer: Player)
+	refreshPlayerList()
+	newPlayer.CharacterAdded:Connect(function()
+		setupESPForCharacter(newPlayer)
+	end)
+	if newPlayer.Character then
+		setupESPForCharacter(newPlayer)
+	end
+end)
+
+-- Player leave: clean up ESP
+playersService.PlayerRemoving:Connect(function(leavingPlayer: Player)
+	refreshPlayerList()
+	if espElements[leavingPlayer] then
+		removeESP(leavingPlayer)
+	end
+end)
+
+-- ESP setup for existing players
+for _, p: Player in ipairs(playersService:GetPlayers()) do
+	if p ~= player then
+		p.CharacterAdded:Connect(function()
+			setupESPForCharacter(p)
+		end)
+		if p.Character then
+			task.spawn(function()
+				task.wait(0.3)
+				createESP(p)
+			end)
+		end
+	end
+end
+
+-- Initial setup
+refreshPlayerList()
+updateFOVOverlay()
