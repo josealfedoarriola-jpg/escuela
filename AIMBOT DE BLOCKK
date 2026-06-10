@@ -961,6 +961,83 @@ local function getRarity(tool: Tool): string
 	return "Common"
 end
 
+local MELEE_KEYWORDS: { string } = {
+	"sword", "knife", "katana", "bat", "axe", "hammer", "club", "crowbar", "wrench",
+	"shovel", "spear", "dagger", "machete", "scythe", "sickle", "halberd", "lance",
+	"rapier", "cutlass", "scimitar", "claymore", "fist", "gauntlet", "staff", "rod",
+	"stick", "baton", "mace", "flail", "whip", "chain", "blade", "saber", "cane",
+	"pipe", "pan", "spatula", "cleaver", "hatchet", "tomahawk", "pike",
+	"trident", "fork", "stake", "bowie", "kukri", "tanto", "nunchaku", "bo",
+	"quarterstaff", "cudgel", "bludgeon", "brass knuckles", "taser", "stun",
+}
+
+local GUN_KEYWORDS: { string } = {
+	"gun", "rifle", "pistol", "shotgun", "sniper", "bow", "crossbow", "launcher",
+	"grenade", "bomb", "mine", "turret", "cannon", "blaster", "laser", "ray",
+	"revolver", "deagle", "ak", "ar", "m4", "mp5", "uzi", "glock", "beretta",
+	"magnum", "flamethrower", "rocket", "missile", "musket", "slingshot",
+}
+
+local function isMeleeWeapon(tool: Tool): boolean
+	local typeAttrs: { string } = { "Type", "WeaponType", "Category", "Class", "ItemType", "ToolType" }
+	for _, attrName: string in ipairs(typeAttrs) do
+		local val: any = tool:GetAttribute(attrName)
+		if val and type(val) == "string" then
+			local lower: string = (val :: string):lower()
+			if lower:find("melee") or lower:find("sword") or lower:find("knife") or lower:find("blunt") then
+				return true
+			end
+			if lower:find("gun") or lower:find("ranged") or lower:find("firearm") or lower:find("projectile") then
+				return false
+			end
+		end
+	end
+
+	for _, child: Instance in ipairs(tool:GetChildren()) do
+		if child:IsA("StringValue") then
+			local nameLower: string = child.Name:lower()
+			if nameLower:find("type") or nameLower:find("category") or nameLower:find("class") then
+				local valLower: string = child.Value:lower()
+				if valLower:find("melee") or valLower:find("sword") or valLower:find("knife") or valLower:find("blunt") then
+					return true
+				end
+				if valLower:find("gun") or valLower:find("ranged") or valLower:find("firearm") or valLower:find("projectile") then
+					return false
+				end
+			end
+		end
+	end
+
+	local nameToCheck: string = getDisplayName(tool):lower()
+	local toolNameLower: string = tool.Name:lower()
+
+	for _, keyword: string in ipairs(GUN_KEYWORDS) do
+		if nameToCheck:find(keyword) or toolNameLower:find(keyword) then
+			return false
+		end
+	end
+
+	for _, keyword: string in ipairs(MELEE_KEYWORDS) do
+		if nameToCheck:find(keyword) or toolNameLower:find(keyword) then
+			return true
+		end
+	end
+
+	for _, desc: Instance in ipairs(tool:GetDescendants()) do
+		if desc:IsA("Script") or desc:IsA("LocalScript") or desc:IsA("ModuleScript") then
+			local name: string = desc.Name:lower()
+			if name:find("fire") or name:find("shoot") or name:find("bullet") or name:find("ammo") or name:find("gun") or name:find("reload") or name:find("recoil") then
+				return false
+			end
+			if name:find("swing") or name:find("slash") or name:find("stab") or name:find("melee") then
+				return true
+			end
+		end
+	end
+
+	return false
+end
+
 type ToolInfo = { name: string, rarity: string }
 
 local function getToolList(targetPlayer: Player): { ToolInfo }
@@ -1153,30 +1230,48 @@ local function updateESP(): ()
 			esp.statsLabel.TextColor3 = Color3.fromRGB(255, 80, 80)
 		end
 
-		-- Items (Weapon: name + rarity, filter out Common, colored by rarity)
-		local toolList: { ToolInfo } = getToolList(targetPlayer)
-		-- Filter out Common rarity
-		local filteredTools: { ToolInfo } = {}
-		for _, info: ToolInfo in ipairs(toolList) do
-			if info.rarity ~= "Common" then
-				table.insert(filteredTools, info)
+		-- Items: all weapons (not Common), show rarity instead of name
+		local function collectWeaponRarities(): { string }
+			local rarities: { string } = {}
+			local seen: { [string]: boolean } = {}
+			local function scanTools(container: Instance?): ()
+				if not container then return end
+				for _, child: Instance in ipairs(container:GetChildren()) do
+					if child:IsA("Tool") then
+						local tool: Tool = child :: Tool
+						local rarity: string = getRarity(tool)
+						if rarity ~= "Common" and not seen[rarity] then
+							seen[rarity] = true
+							table.insert(rarities, rarity)
+						end
+					end
+				end
 			end
+			local character: Model? = targetPlayer.Character
+			if character then scanTools(character) end
+			local backpack: Backpack? = targetPlayer:FindFirstChildOfClass("Backpack")
+			if backpack then scanTools(backpack) end
+			local starterGear: Instance? = targetPlayer:FindFirstChild("StarterGear")
+			if starterGear then scanTools(starterGear) end
+			return rarities
 		end
-		if #filteredTools == 0 then
+
+		local weaponRarities: { string } = collectWeaponRarities()
+		if #weaponRarities == 0 then
 			esp.itemLabel.Text = '<font color="#888888">Weapon:</font> None'
 		else
 			local display: string = '<font color="#888888">Weapon:</font> '
-			for i = 1, math.min(#filteredTools, 3) do
+			for i = 1, math.min(#weaponRarities, 3) do
 				if i > 1 then
 					display ..= " | "
 				end
-				local toolInfo: ToolInfo = filteredTools[i]
-				local color: Color3 = RARITY_COLORS[toolInfo.rarity] or RARITY_COLORS.Common
+				local rarity: string = weaponRarities[i]
+				local color: Color3 = RARITY_COLORS[rarity] or RARITY_COLORS.Common
 				local hex: string = string.format("#%02X%02X%02X", math.floor(color.R * 255), math.floor(color.G * 255), math.floor(color.B * 255))
-				display ..= string.format('<font color="%s">%s</font>', hex, toolInfo.name)
+				display ..= string.format('<font color="%s">%s</font>', hex, rarity)
 			end
-			if #filteredTools > 3 then
-				display ..= string.format(' <font color="#888888">+%d</font>', #filteredTools - 3)
+			if #weaponRarities > 3 then
+				display ..= string.format(' <font color="#888888">+%d</font>', #weaponRarities - 3)
 			end
 			esp.itemLabel.Text = display
 		end
