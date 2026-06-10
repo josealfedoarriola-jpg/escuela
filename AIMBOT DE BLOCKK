@@ -1230,50 +1230,58 @@ local function updateESP(): ()
 			esp.statsLabel.TextColor3 = Color3.fromRGB(255, 80, 80)
 		end
 
-		-- Items: all weapons (not Common), show rarity instead of name
-		local function collectWeaponRarities(): { string }
-			local rarities: { string } = {}
-			local seen: { [string]: boolean } = {}
-			local function scanTools(container: Instance?): ()
-				if not container then return end
-				for _, child: Instance in ipairs(container:GetChildren()) do
-					if child:IsA("Tool") then
-						local tool: Tool = child :: Tool
-						local rarity: string = getRarity(tool)
-						if rarity ~= "Common" and not seen[rarity] then
-							seen[rarity] = true
-							table.insert(rarities, rarity)
-						end
-					end
+		-- Items: show highest weapon rarity (guns only, skip Common)
+		local function getHighestWeaponRarity(): string?
+			local highestIndex: number = 0
+			local bestRarity: string? = nil
+			local function checkTool(tool: Tool): ()
+				if isMeleeWeapon(tool) then
+					return
+				end
+				local rarity: string = getRarity(tool)
+				if rarity == "Common" then
+					return
+				end
+				local index: number = table.find(RARITY_ORDER, rarity) or 0
+				if index > highestIndex then
+					highestIndex = index
+					bestRarity = rarity
 				end
 			end
 			local character: Model? = targetPlayer.Character
-			if character then scanTools(character) end
+			if character then
+				for _, child: Instance in ipairs(character:GetChildren()) do
+					if child:IsA("Tool") then
+						checkTool(child :: Tool)
+					end
+				end
+			end
 			local backpack: Backpack? = targetPlayer:FindFirstChildOfClass("Backpack")
-			if backpack then scanTools(backpack) end
+			if backpack then
+				for _, child: Instance in ipairs(backpack:GetChildren()) do
+					if child:IsA("Tool") then
+						checkTool(child :: Tool)
+					end
+				end
+			end
 			local starterGear: Instance? = targetPlayer:FindFirstChild("StarterGear")
-			if starterGear then scanTools(starterGear) end
-			return rarities
+			if starterGear then
+				for _, child: Instance in ipairs(starterGear:GetChildren()) do
+					if child:IsA("Tool") then
+						checkTool(child :: Tool)
+					end
+				end
+			end
+			return bestRarity
 		end
 
-		local weaponRarities: { string } = collectWeaponRarities()
-		if #weaponRarities == 0 then
-			esp.itemLabel.Text = '<font color="#888888">Weapon:</font> None'
+		local bestRarity: string? = getHighestWeaponRarity()
+		if bestRarity then
+			local color: Color3 = RARITY_COLORS[bestRarity] or RARITY_COLORS.Common
+			local hex: string = string.format("#%02X%02X%02X", math.floor(color.R * 255), math.floor(color.G * 255), math.floor(color.B * 255))
+			esp.itemLabel.Text = string.format('<font color="#888888">Weapon:</font> <font color="%s">%s</font>', hex, bestRarity)
 		else
-			local display: string = '<font color="#888888">Weapon:</font> '
-			for i = 1, math.min(#weaponRarities, 3) do
-				if i > 1 then
-					display ..= " | "
-				end
-				local rarity: string = weaponRarities[i]
-				local color: Color3 = RARITY_COLORS[rarity] or RARITY_COLORS.Common
-				local hex: string = string.format("#%02X%02X%02X", math.floor(color.R * 255), math.floor(color.G * 255), math.floor(color.B * 255))
-				display ..= string.format('<font color="%s">%s</font>', hex, rarity)
-			end
-			if #weaponRarities > 3 then
-				display ..= string.format(' <font color="#888888">+%d</font>', #weaponRarities - 3)
-			end
-			esp.itemLabel.Text = display
+			esp.itemLabel.Text = '<font color="#888888">Weapon:</font> None'
 		end
 
 		-- Re-parent billboard if character respawned
