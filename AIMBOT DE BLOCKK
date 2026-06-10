@@ -8,7 +8,7 @@ local camera: Camera = workspace.CurrentCamera
 local playersService: Players = game:GetService("Players")
 local replicatedStorage: ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-local AIMBOT_KEY: EnumItem = Enum.KeyCode.F
+local AIMBOT_KEY: EnumItem = Enum.KeyCode.E
 local MIN_FOV: number = 10
 local MAX_FOV: number = 180
 
@@ -87,7 +87,7 @@ titleLabel.Name = "Title"
 titleLabel.Size = UDim2.new(1, -38, 1, 0)
 titleLabel.Position = UDim2.new(0, 10, 0, 0)
 titleLabel.BackgroundTransparency = 1
-titleLabel.Text = "Carlos Script"
+titleLabel.Text = "Aimbot Script"
 titleLabel.TextColor3 = ACCENT
 titleLabel.TextScaled = true
 titleLabel.Font = Enum.Font.GothamBold
@@ -174,7 +174,7 @@ aimbotBtn.Name = "AimbotToggle"
 aimbotBtn.Size = UDim2.new(0.85, 0, 0, 42)
 aimbotBtn.Position = UDim2.new(0.075, 0, 0, 44)
 aimbotBtn.BackgroundColor3 = RED_OFF
-aimbotBtn.Text = "Aimbot: OFF [F]"
+aimbotBtn.Text = "Aimbot: OFF [E]"
 aimbotBtn.TextColor3 = TEXT_DIM
 aimbotBtn.TextScaled = true
 aimbotBtn.Font = Enum.Font.GothamBold
@@ -476,7 +476,7 @@ local function toggleAimbot(): ()
 		aimbotBtn.BackgroundColor3 = GREEN_ON
 		aimbotBtn.TextColor3 = TEXT_WHITE
 		aimbotBtnStroke.Color = GREEN_ON_DARK
-		aimbotBtn.Text = "Aimbot: ON [F]"
+		aimbotBtn.Text = "Aimbot: ON [E]"
 		local grad = aimbotBtn:FindFirstChildOfClass("UIGradient")
 		if not grad then
 			grad = Instance.new("UIGradient")
@@ -491,7 +491,7 @@ local function toggleAimbot(): ()
 		aimbotBtn.BackgroundColor3 = RED_OFF
 		aimbotBtn.TextColor3 = TEXT_DIM
 		aimbotBtnStroke.Color = Color3.fromRGB(55, 55, 75)
-		aimbotBtn.Text = "Aimbot: OFF [F]"
+		aimbotBtn.Text = "Aimbot: OFF [E]"
 		local grad = aimbotBtn:FindFirstChildOfClass("UIGradient")
 		if grad then
 			grad:Destroy()
@@ -1523,7 +1523,7 @@ userInputService.InputBegan:Connect(function(input: InputObject, gameProcessed: 
 			aimbotBtn.BackgroundColor3 = GREEN_ON
 			aimbotBtn.TextColor3 = TEXT_WHITE
 			aimbotBtnStroke.Color = GREEN_ON_DARK
-			aimbotBtn.Text = "Aimbot: ON [F]"
+			aimbotBtn.Text = "Aimbot: ON [E]"
 			local grad = aimbotBtn:FindFirstChildOfClass("UIGradient")
 			if not grad then
 				grad = Instance.new("UIGradient")
@@ -1546,7 +1546,7 @@ userInputService.InputEnded:Connect(function(input: InputObject)
 			aimbotBtn.BackgroundColor3 = RED_OFF
 			aimbotBtn.TextColor3 = TEXT_DIM
 			aimbotBtnStroke.Color = Color3.fromRGB(55, 55, 75)
-			aimbotBtn.Text = "Aimbot: OFF [F]"
+			aimbotBtn.Text = "Aimbot: OFF [E]"
 			local grad = aimbotBtn:FindFirstChildOfClass("UIGradient")
 			if grad then
 				grad:Destroy()
